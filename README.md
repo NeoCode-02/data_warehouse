@@ -39,7 +39,7 @@ flowchart LR
 | Folder | What it does |
 | --- | --- |
 | `bronze_to_silver/` | `ingest_weather.py` pulls daily NYC weather for 2024 from WeatherAPI into bronze. The other notebooks cast types, drop nulls and invalid rows (non-positive fares, distances, durations; negative pollutant values), restrict taxi, air-quality and FX data to 2024, and write Delta tables to silver. |
-| `silver_to_gold/` | Builds the dimensions (`DimDate` 2019–2026, `DimZone`, `DimFX`, `DimGDP`) and daily facts. `FactTaxiDaily` aggregates trips per day, zone pair and payment type, and joins the ECB rate for that day to add EUR columns. |
+| `silver_to_gold/` | Builds the dimensions (`DimDate` 2019–2026, `DimZone`, `DimFX`, `DimGDP`) and daily facts. `FactTaxiDaily` aggregates trips per day, zone pair and payment type, and converts USD to EUR with the ECB rate (USD per 1 EUR), carrying the last rate over weekends and holidays. |
 | `influx_client/` | Runs locally against gold tables exported to CSV (`factweatherdaily.csv`, `factairqualitydaily.csv`): `great_expectation.py` runs null/range checks, `telegram_bot.py` returns that report on `/check_quality`, `weather_to_influxdb.py` writes the weather fact into InfluxDB. |
 
 ## Running
@@ -48,7 +48,10 @@ flowchart LR
 notebook attached to the matching lakehouse. They use the notebook's built-in `spark`
 and `display`; the gold notebooks also expect `from pyspark.sql.functions import *` and
 `from pyspark.sql.types import IntegerType` in the first cell. Run bronze → silver, then
-the dimensions, then the facts (`FactTaxiDaily` reads `DimFX`).
+the dimensions, then the facts (`FactTaxiDaily` reads `DimDate` and `DimFX`).
+
+`tests/check_fact_taxi_fx.py` runs the `FactTaxiDaily` EUR conversion on a local Spark
+with a few fixture rows: `pip install pyspark && python tests/check_fact_taxi_fx.py` (needs Java).
 
 **Local tools** (`influx_client/`):
 

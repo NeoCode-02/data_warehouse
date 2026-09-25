@@ -1,3 +1,5 @@
+from pyspark.sql.window import Window
+
 fact_taxi = spark.read.table(f"lh_silver.dbo.nyc_taxi_silver") \
     .filter(
         col("tpep_pickup_datetime").isNotNull() &
@@ -24,12 +26,20 @@ fact_taxi = spark.read.table(f"lh_silver.dbo.nyc_taxi_silver") \
     .withColumnRenamed("pu_location_id", "pickup_zone_id") \
     .withColumnRenamed("do_location_id", "dropoff_zone_id")
 
-fx = spark.read.table("lh_gold.dbo.DimFX").select("date", "exchange_rate")
+# ECB quotes USD per 1 EUR on business days only: carry the last rate over
+# weekends/holidays; days before the first rate (Jan 1) take the next one.
+days = Window.orderBy("date")
+fx = spark.read.table("lh_gold.dbo.DimDate").where(col("year") == 2024).select("date") \
+    .join(spark.read.table("lh_gold.dbo.DimFX").select("date", "exchange_rate"), "date", "left") \
+    .withColumn("exchange_rate", coalesce(
+        last("exchange_rate", ignorenulls=True).over(days.rowsBetween(Window.unboundedPreceding, 0)),
+        first("exchange_rate", ignorenulls=True).over(days.rowsBetween(0, Window.unboundedFollowing)),
+    ))
 
 fact_taxi = fact_taxi \
     .join(fx, fact_taxi.pickup_date == fx.date, "left") \
-    .withColumn("total_fare_eur", round(col("total_fare_usd") * col("exchange_rate"), 2)) \
-    .withColumn("total_revenue_eur", round(col("total_revenue_usd") * col("exchange_rate"), 2)) \
+    .withColumn("total_fare_eur", round(col("total_fare_usd") / col("exchange_rate"), 2)) \
+    .withColumn("total_revenue_eur", round(col("total_revenue_usd") / col("exchange_rate"), 2)) \
     .drop("date", "exchange_rate")
 
 display(fact_taxi.limit(5))
